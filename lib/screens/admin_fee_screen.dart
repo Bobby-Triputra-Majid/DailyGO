@@ -93,7 +93,7 @@ class AdminFeeScreen extends StatelessWidget {
                   onChanged: (v) => setState(() => toId = v ?? toId),
                 ),
                 const SizedBox(height: 14),
-                AmountField(controller: ctrl, label: 'Biaya Admin', autofocus: existing != null),
+                AmountField(controller: ctrl, label: 'Biaya Admin'),
                 if (fromId == toId)
                   const Padding(
                     padding: EdgeInsets.only(top: 8),

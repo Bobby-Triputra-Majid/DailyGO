@@ -15,9 +15,10 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
   late final Animation<double> _scale;
   late final Animation<double> _opacity;
 
-  /// Loops for as long as the splash is shown — a glossy highlight
-  /// sweeping across the background (not the logo/text), the usual
-  /// visual cue that something's loading behind the scenes.
+  /// A glossy highlight sweeping top-to-bottom across the full background
+  /// (not the logo/text) — the usual visual cue that something's loading
+  /// behind the scenes. Runs exactly twice, timed to finish right as the
+  /// splash hands off to the app.
   late final AnimationController _shimmerController;
 
   @override
@@ -27,12 +28,12 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     _scale = CurvedAnimation(parent: _controller, curve: Curves.easeOutBack).drive(Tween(begin: 0.6, end: 1.0));
     _opacity = CurvedAnimation(parent: _controller, curve: const Interval(0.0, 0.6)).drive(Tween(begin: 0.0, end: 1.0));
     _controller.forward();
-    _shimmerController = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat();
+    _shimmerController = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(count: 2);
     _scheduleNext();
   }
 
   Future<void> _scheduleNext() async {
-    await Future.delayed(const Duration(milliseconds: 1600));
+    await Future.delayed(const Duration(milliseconds: 1800));
     if (mounted) {
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const RootShell()));
     }
@@ -57,14 +58,16 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
           AnimatedBuilder(
             animation: _shimmerController,
             builder: (context, _) {
-              // Sweeps fully off-screen-left to off-screen-right each loop,
-              // so the shine travels through and resets clean.
-              final dx = -1.0 + 3.0 * _shimmerController.value;
+              // Sweeps fully off-screen-top to off-screen-bottom each loop,
+              // spanning the full width, so the shine travels through the
+              // whole screen (not just a band through the middle) and
+              // resets clean.
+              final dy = -1.0 + 3.0 * _shimmerController.value;
               return DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    begin: Alignment(dx - 0.6, -1),
-                    end: Alignment(dx + 0.6, 1),
+                    begin: Alignment(-1, dy - 0.6),
+                    end: Alignment(1, dy + 0.6),
                     colors: [colorScheme.primary, Colors.white.withOpacity(0.22), colorScheme.primary],
                     stops: const [0.35, 0.5, 0.65],
                   ),

@@ -162,19 +162,16 @@ class FinanceProvider extends ChangeNotifier {
   /// floored to [kGrabMinimumFare]. But sometimes — typically on a cash
   /// trip — Grab's system credits less than that, e.g. billed 16.000,
   /// passenger hands over 17.000 cash, yet the system only pays out
-  /// 14.000 as the fare (the rest of the gap is Grab's own cut, not
-  /// something the passenger shorted). When the driver knows that actual
-  /// payout, pass it as [netPayout] and it's booked as the fare directly,
-  /// overriding the usual billed/minimum-fare math (which was always just
-  /// an estimate for when that number isn't known).
+  /// 14.000 as the fare. The cash itself was still fully collected by the
+  /// driver though — the gap is Grab's commission, deducted separately
+  /// from Saldo Grab as a "Biaya Admin Grab" expense (see
+  /// [_adminFeeAmount]), not subtracted from the fare/cash here.
   static (double fare, double tip) resolveFareAndTip(
     double billedAmount,
-    double receivedAmount, {
-    double? netPayout,
-  }) {
+    double receivedAmount,
+  ) {
     final isShortage = receivedAmount < billedAmount;
     final tip = isShortage ? 0.0 : receivedAmount - billedAmount;
-    if (netPayout != null) return (netPayout, tip);
     if (isShortage) {
       final topUp = billedAmount < kGrabMinimumFare ? kGrabMinimumFare - billedAmount : 0.0;
       return (receivedAmount + topUp, 0.0);
@@ -206,21 +203,38 @@ class FinanceProvider extends ChangeNotifier {
     return isOffline ? kWalletBank : kWalletSaldoGrab;
   }
 
-  /// Only non-zero on a *cash* trip with a known system cut: the part of
-  /// the billed amount the passenger's cash covered but Grab's system
-  /// didn't recognize as fare. It's still real cash in the driver's
-  /// pocket, so it isn't lost — it's booked to Saldo Grab instead of
-  /// Cash, keeping Saldo accurate without overstating "Ongkos Grab".
-  double _potonganAmount(bool isCash, double billedAmount, double? netPayoutAmount) {
+  /// Only non-zero on a *cash* trip with a known system cut: Grab's
+  /// commission on this trip, the part of the billed amount the
+  /// passenger's cash covered but Grab's system doesn't credit as net
+  /// fare. The cash itself was still fully collected by the driver, so
+  /// this is booked as a real expense (not subtracted from the fare),
+  /// deducted from Saldo Grab since that's the account Grab actually
+  /// takes its cut from, separate from the cash in hand.
+  double _adminFeeAmount(bool isCash, double billedAmount, double? netPayoutAmount) {
     if (!isCash || netPayoutAmount == null) return 0;
     final diff = billedAmount - netPayoutAmount;
     return diff > 0 ? diff : 0;
   }
 
+  /// Only non-zero on a *cash* trip billed below [kGrabMinimumFare]: the
+  /// part of the recognized fare that's Grab's own top-up, not cash the
+  /// passenger actually handed over. e.g. billed 7.000, passenger pays
+  /// exactly that — Grab still credits 8.000 as "Ongkos Grab", but only
+  /// 7.000 of that is real cash in the driver's pocket; the other 1.000
+  /// is a pending digital credit, so it's booked to Saldo Grab instead of
+  /// Cash. Never applies to Non-Tunai/Offline — their whole fare already
+  /// sits in one dompet (Saldo Grab/Bank) with no cash-vs-digital split
+  /// to make.
+  double _minimumFareTopUp(bool isCash, double billedAmount) {
+    if (!isCash) return 0;
+    final diff = kGrabMinimumFare - billedAmount;
+    return diff > 0 ? diff : 0;
+  }
+
   /// Records a Grab trip. All rows share a groupId so the UI can show
   /// them as one trip. See [resolveFareAndTip] for how the fare/tip
-  /// split is worked out, and [_potonganAmount] for the Saldo Grab
-  /// adjustment on a cash trip with a system cut.
+  /// split is worked out, and [_adminFeeAmount] for the Grab commission
+  /// expense on a cash trip with a known system cut.
   Future<void> addGrabTrip({
     required double fareAmount,
     required double receivedAmount,
@@ -235,14 +249,24 @@ class FinanceProvider extends ChangeNotifier {
     // An offline trip (flagged down outside the app) never goes through
     // Grab's own billing — no minimum-fare top-up, no system cut — but
     // still has a Tip, taken as whatever was received above the fare.
-    final (effectiveFare, tipAmount) =
-        isOffline ? (fareAmount, (receivedAmount - fareAmount).clamp(0.0, double.infinity)) : resolveFareAndTip(fareAmount, receivedAmount, netPayout: netPayoutAmount);
-    final potongan = isOffline ? 0.0 : _potonganAmount(isCash, fareAmount, netPayoutAmount);
+    final (effectiveFare, tipAmount) = isOffline
+        ? (fareAmount, (receivedAmount - fareAmount).clamp(0.0, double.infinity))
+        : resolveFareAndTip(fareAmount, receivedAmount);
+    // Measured against the fare actually booked (which, on a shortage, is
+    // topped up above the raw billed amount), not the raw billed amount
+    // itself, so a shortage and a known commission on the same trip don't
+    // overstate the commission.
+    final adminFee = isOffline ? 0.0 : _adminFeeAmount(isCash, effectiveFare, netPayoutAmount);
+    // Measured against the raw billed amount — a cash trip billed below
+    // the minimum fare gets its "Ongkos Grab" topped up to the floor, but
+    // only the billed portion is real cash; the top-up is Grab's own
+    // credit, not something the passenger handed over.
+    final topUp = isOffline ? 0.0 : _minimumFareTopUp(isCash, fareAmount);
 
     final fareTx = TransactionModel(
       id: generateId(),
       type: TxType.income,
-      amount: effectiveFare,
+      amount: effectiveFare - topUp,
       categoryId: 'grab',
       date: date,
       note: note,
@@ -256,6 +280,21 @@ class FinanceProvider extends ChangeNotifier {
       isOffline: isOffline,
     );
     await HiveBoxes.transactions.put(fareTx.id, fareTx);
+
+    if (topUp > 0) {
+      final topUpTx = TransactionModel(
+        id: generateId(),
+        type: TxType.income,
+        amount: topUp,
+        categoryId: 'grab',
+        date: date,
+        note: 'Subsidi minimum ongkos Grab (bukan cash fisik)',
+        groupId: groupId,
+        groupLabel: 'Trip Grab',
+        walletId: kWalletSaldoGrab,
+      );
+      await HiveBoxes.transactions.put(topUpTx.id, topUpTx);
+    }
 
     if (tipAmount > 0) {
       final tipTx = TransactionModel(
@@ -272,33 +311,34 @@ class FinanceProvider extends ChangeNotifier {
       await HiveBoxes.transactions.put(tipTx.id, tipTx);
     }
 
-    if (potongan > 0) {
-      final potonganTx = TransactionModel(
+    if (adminFee > 0) {
+      final adminTx = TransactionModel(
         id: generateId(),
-        type: TxType.income,
-        amount: potongan,
-        categoryId: 'grab',
+        type: TxType.expense,
+        amount: adminFee,
+        categoryId: 'biaya_admin',
         date: date,
-        note: 'Selisih potongan sistem (tetap cash di tangan)',
+        note: 'Komisi/biaya admin Grab',
         groupId: groupId,
         groupLabel: 'Trip Grab',
         walletId: kWalletSaldoGrab,
       );
-      await HiveBoxes.transactions.put(potonganTx.id, potonganTx);
+      await HiveBoxes.transactions.put(adminTx.id, adminTx);
     }
     _sortedTransactionsCache = null;
     notifyListeners();
   }
 
   /// Updates a trip recorded by [addGrabTrip], keeping its id/groupId so
-  /// it stays the same row in the UI. The tip and "potongan" rows are
+  /// it stays the same row in the UI. The tip and admin-fee rows are
   /// created, updated, or removed as needed depending on whether they
   /// still apply after the edit.
   Future<void> updateGrabTrip({
     required TransactionModel existingFare,
     required String groupId,
     TransactionModel? existingTip,
-    TransactionModel? existingPotongan,
+    TransactionModel? existingAdminFee,
+    TransactionModel? existingTopUp,
     required double fareAmount,
     required double receivedAmount,
     required DateTime date,
@@ -308,12 +348,14 @@ class FinanceProvider extends ChangeNotifier {
     bool tipIsCash = true,
     bool isOffline = false,
   }) async {
-    final (effectiveFare, tipAmount) =
-        isOffline ? (fareAmount, (receivedAmount - fareAmount).clamp(0.0, double.infinity)) : resolveFareAndTip(fareAmount, receivedAmount, netPayout: netPayoutAmount);
-    final potongan = isOffline ? 0.0 : _potonganAmount(isCash, fareAmount, netPayoutAmount);
+    final (effectiveFare, tipAmount) = isOffline
+        ? (fareAmount, (receivedAmount - fareAmount).clamp(0.0, double.infinity))
+        : resolveFareAndTip(fareAmount, receivedAmount);
+    final adminFee = isOffline ? 0.0 : _adminFeeAmount(isCash, effectiveFare, netPayoutAmount);
+    final topUp = isOffline ? 0.0 : _minimumFareTopUp(isCash, fareAmount);
 
     existingFare
-      ..amount = effectiveFare
+      ..amount = effectiveFare - topUp
       ..date = date
       ..note = note
       ..isCash = isCash
@@ -323,6 +365,30 @@ class FinanceProvider extends ChangeNotifier {
       ..walletId = _fareWalletId(isCash, isOffline: isOffline)
       ..isOffline = isOffline;
     await HiveBoxes.transactions.put(existingFare.id, existingFare);
+
+    if (topUp > 0) {
+      if (existingTopUp != null) {
+        existingTopUp
+          ..amount = topUp
+          ..date = date;
+        await HiveBoxes.transactions.put(existingTopUp.id, existingTopUp);
+      } else {
+        final topUpTx = TransactionModel(
+          id: generateId(),
+          type: TxType.income,
+          amount: topUp,
+          categoryId: 'grab',
+          date: date,
+          note: 'Subsidi minimum ongkos Grab (bukan cash fisik)',
+          groupId: groupId,
+          groupLabel: 'Trip Grab',
+          walletId: kWalletSaldoGrab,
+        );
+        await HiveBoxes.transactions.put(topUpTx.id, topUpTx);
+      }
+    } else if (existingTopUp != null) {
+      await HiveBoxes.transactions.delete(existingTopUp.id);
+    }
 
     if (tipAmount > 0) {
       final tipWalletId = _tipWalletId(isCash, tipIsCash, isOffline: isOffline);
@@ -350,28 +416,28 @@ class FinanceProvider extends ChangeNotifier {
       await HiveBoxes.transactions.delete(existingTip.id);
     }
 
-    if (potongan > 0) {
-      if (existingPotongan != null) {
-        existingPotongan
-          ..amount = potongan
+    if (adminFee > 0) {
+      if (existingAdminFee != null) {
+        existingAdminFee
+          ..amount = adminFee
           ..date = date;
-        await HiveBoxes.transactions.put(existingPotongan.id, existingPotongan);
+        await HiveBoxes.transactions.put(existingAdminFee.id, existingAdminFee);
       } else {
-        final potonganTx = TransactionModel(
+        final adminTx = TransactionModel(
           id: generateId(),
-          type: TxType.income,
-          amount: potongan,
-          categoryId: 'grab',
+          type: TxType.expense,
+          amount: adminFee,
+          categoryId: 'biaya_admin',
           date: date,
-          note: 'Selisih potongan sistem (tetap cash di tangan)',
+          note: 'Komisi/biaya admin Grab',
           groupId: groupId,
           groupLabel: 'Trip Grab',
           walletId: kWalletSaldoGrab,
         );
-        await HiveBoxes.transactions.put(potonganTx.id, potonganTx);
+        await HiveBoxes.transactions.put(adminTx.id, adminTx);
       }
-    } else if (existingPotongan != null) {
-      await HiveBoxes.transactions.delete(existingPotongan.id);
+    } else if (existingAdminFee != null) {
+      await HiveBoxes.transactions.delete(existingAdminFee.id);
     }
     _sortedTransactionsCache = null;
     notifyListeners();

@@ -53,7 +53,6 @@ class _GrabFuelEntryScreenState extends State<GrabFuelEntryScreen> {
           AmountField(
             controller: _amountCtrl,
             label: 'Jumlah Isi BBM',
-            autofocus: true,
             onChanged: (_) => setState(() {}),
           ),
           if (provider.aktifKeKampus) ...[

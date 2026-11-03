@@ -56,11 +56,22 @@ class TransactionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primaryCat = categoryResolver(entry.primary.categoryId);
-    final isIncome = entry.primary.type == TxType.income;
+    // A single transaction is income/expense exactly as tagged; a group
+    // (e.g. a Grab trip's fare+tip alongside its admin-fee expense) goes
+    // by the net sign instead, since it can legitimately mix both types.
+    final isIncome = entry.isGroup ? entry.totalAmount >= 0 : entry.primary.type == TxType.income;
     final color = primaryCat != null ? Color(primaryCat.colorValue) : Colors.grey;
     final icon = primaryCat != null ? iconFromCodePoint(primaryCat.iconCodePoint) : Icons.category;
 
-    final title = entry.isGroup ? (entry.groupLabel ?? primaryCat?.name ?? 'Transaksi') : (primaryCat?.name ?? 'Transaksi');
+    // groupLabel wins whenever this row actually has a groupId — including
+    // a single-transaction "group" (e.g. a Grab trip that's just a fare
+    // with no tip/top-up/admin-fee legs), which used to fall back to the
+    // category name ("Grab") instead of "Trip Grab", reading as a
+    // different, inconsistent kind of row. A standalone BBM/Makan entry
+    // also carries groupLabel 'Trip Grab' (just for filtering elsewhere)
+    // but has no groupId, so it's unaffected and still shows its own
+    // category name.
+    final title = (entry.groupId != null ? entry.groupLabel : null) ?? primaryCat?.name ?? 'Transaksi';
 
     // A grouped trip's fare+tip breakdown isn't shown here — the tip (or
     // shortage) badge next to the amount already covers that — so this
@@ -75,7 +86,7 @@ class TransactionTile extends StatelessWidget {
       children: [
         ListTile(
           dense: true,
-          onTap: onTap,
+          onTap: () => _showDetailSheet(context, title, icon, color, isIncome),
           leading: CircleAvatar(
             backgroundColor: color.withOpacity(0.15),
             child: Icon(icon, color: color, size: 20),
@@ -105,7 +116,7 @@ class TransactionTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${isIncome ? '+' : '-'}${formatRupiah(entry.totalAmount)}',
+                '${isIncome ? '+' : '-'}${formatRupiah(entry.totalAmount.abs())}',
                 style: TextStyle(
                   color: isIncome ? Colors.green.shade700 : Colors.red.shade700,
                   fontWeight: FontWeight.bold,
@@ -170,6 +181,90 @@ class TransactionTile extends StatelessWidget {
         children: actions,
       ),
       child: tile,
+    );
+  }
+
+  /// A clean detail view for the tapped row — time, title, note, amount —
+  /// shown instead of jumping straight into the edit form. Editing is now
+  /// one deliberate extra tap away, via the button inside.
+  void _showDetailSheet(BuildContext context, String title, IconData icon, Color color, bool isIncome) {
+    final note = entry.primary.note;
+    final time = '${entry.date.hour.toString().padLeft(2, '0')}:${entry.date.minute.toString().padLeft(2, '0')}';
+    final fullDate = '${formatLongDate(entry.date)} • $time';
+
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(radius: 24, backgroundColor: color.withOpacity(0.15), child: Icon(icon, color: color)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${isIncome ? '+' : '-'}${formatRupiah(entry.totalAmount.abs())}',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: isIncome ? Colors.green.shade700 : Colors.red.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _detailRow(ctx, Icons.schedule_outlined, fullDate),
+              if (note != null && note.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _detailRow(ctx, Icons.notes_outlined, note),
+              ],
+              if (trailingNote != null) ...[
+                const SizedBox(height: 12),
+                _detailRow(ctx, trailingNoteIcon ?? Icons.info_outline, trailingNote!),
+              ],
+              if (onTap != null) ...[
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      onTap!();
+                    },
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Edit'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(BuildContext context, IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        const SizedBox(width: 10),
+        Expanded(child: Text(text, style: const TextStyle(fontSize: 14))),
+      ],
     );
   }
 }

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/debt_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/asset_provider.dart';
 import '../providers/finance_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../screens/debt_entry_screen.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/date_period.dart';
@@ -81,8 +84,8 @@ void showDebtActions(
               leading: const Icon(Icons.check_circle_outline),
               title: const Text('Tandai Lunas'),
               onTap: () {
-                assetProvider.markDebtPaid(debt, financeProvider);
                 Navigator.pop(ctx);
+                _showMarkPaidDialog(context, assetProvider, financeProvider, debt);
               },
             ),
             ListTile(
@@ -116,9 +119,68 @@ void showDebtActions(
   );
 }
 
+/// Small "which dompet does this money move through" dropdown shared by
+/// both the Tandai Lunas and Bayar Sebagian dialogs below.
+Widget _walletDropdown(List<WalletModel> wallets, String value, ValueChanged<String> onChanged) {
+  return DropdownButtonFormField<String>(
+    initialValue: wallets.any((w) => w.id == value) ? value : null,
+    decoration: const InputDecoration(
+      labelText: 'Dompet',
+      border: OutlineInputBorder(),
+      contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+    ),
+    items: wallets.map((w) => DropdownMenuItem(value: w.id, child: Text(w.name))).toList(),
+    onChanged: (v) {
+      if (v != null) onChanged(v);
+    },
+  );
+}
+
+/// Asks which dompet the full remaining amount lands in (or comes out
+/// of, for a utang) before settling the debt.
+void _showMarkPaidDialog(
+  BuildContext context,
+  AssetProvider assetProvider,
+  FinanceProvider financeProvider,
+  DebtModel debt,
+) {
+  final wallets = context.read<WalletProvider>().wallets;
+  var walletId = wallets.isNotEmpty ? wallets.first.id : kWalletCash;
+  showDialog(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) {
+        return AlertDialog(
+          title: const Text('Tandai Lunas'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Jumlah: ${formatRupiah(debt.remaining)}'),
+              const SizedBox(height: 14),
+              _walletDropdown(wallets, walletId, (v) => setState(() => walletId = v)),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+            FilledButton(
+              onPressed: () {
+                assetProvider.markDebtPaid(debt, financeProvider, walletId: walletId);
+                Navigator.pop(ctx);
+              },
+              child: const Text('Tandai Lunas'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 /// Asks how much is being paid now (e.g. owed Rp100.000, pays Rp70.000) —
 /// capped at what's still owed; paying the full remaining amount here
-/// settles the debt exactly like "Tandai Lunas" would.
+/// settles the debt exactly like "Tandai Lunas" would. Also asks which
+/// dompet the money moves through, same as "Tandai Lunas".
 void _showPartialPaymentDialog(
   BuildContext context,
   AssetProvider assetProvider,
@@ -126,6 +188,8 @@ void _showPartialPaymentDialog(
   DebtModel debt,
 ) {
   final ctrl = TextEditingController();
+  final wallets = context.read<WalletProvider>().wallets;
+  var walletId = wallets.isNotEmpty ? wallets.first.id : kWalletCash;
   showDialog(
     context: context,
     builder: (ctx) => StatefulBuilder(
@@ -143,9 +207,10 @@ void _showPartialPaymentDialog(
               AmountField(
                 controller: ctrl,
                 label: 'Jumlah dibayar sekarang',
-                autofocus: true,
                 onChanged: (_) => setState(() {}),
               ),
+              const SizedBox(height: 14),
+              _walletDropdown(wallets, walletId, (v) => setState(() => walletId = v)),
               if (tooMuch)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -162,7 +227,7 @@ void _showPartialPaymentDialog(
               onPressed: (entered <= 0 || tooMuch)
                   ? null
                   : () {
-                      assetProvider.payDebt(debt, entered, financeProvider);
+                      assetProvider.payDebt(debt, entered, financeProvider, walletId: walletId);
                       Navigator.pop(ctx);
                     },
               child: const Text('Bayar'),

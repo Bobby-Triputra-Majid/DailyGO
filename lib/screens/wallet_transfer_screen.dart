@@ -89,7 +89,7 @@ class _WalletTransferScreenState extends State<WalletTransferScreen> {
             }),
           ),
           const SizedBox(height: 20),
-          AmountField(controller: _amountCtrl, label: 'Jumlah', autofocus: true, onChanged: (_) => setState(() {})),
+          AmountField(controller: _amountCtrl, label: 'Jumlah', onChanged: (_) => setState(() {})),
           const SizedBox(height: 20),
           AmountField(controller: _feeCtrl, label: 'Biaya Admin (opsional)', onChanged: (_) => setState(() {})),
           const Padding(

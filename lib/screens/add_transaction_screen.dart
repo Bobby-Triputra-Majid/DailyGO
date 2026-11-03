@@ -91,7 +91,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             }),
           ),
           const SizedBox(height: 20),
-          AmountField(controller: _amountCtrl, label: 'Jumlah', autofocus: !isEdit),
+          AmountField(controller: _amountCtrl, label: 'Jumlah'),
           const SizedBox(height: 20),
           const Text('Kategori', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),

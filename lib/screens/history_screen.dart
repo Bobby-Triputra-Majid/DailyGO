@@ -198,14 +198,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       child: Icon(c != null ? iconFromCodePoint(c.iconCodePoint) : Icons.circle),
                     ),
                     title: Text(c?.name ?? '-'),
-                    trailing: Text(formatRupiah(t.amount)),
+                    trailing: Text(
+                      '${t.type == TxType.income ? '+' : '-'}${formatRupiah(t.amount)}',
+                      style: TextStyle(color: t.type == TxType.income ? Colors.green.shade700 : Colors.red.shade700),
+                    ),
                   );
                 }),
                 const Divider(),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
-                  trailing: Text(formatRupiah(entry.totalAmount), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  trailing: Text(
+                    '${entry.totalAmount >= 0 ? '+' : '-'}${formatRupiah(entry.totalAmount.abs())}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ),

@@ -30,14 +30,12 @@ import '../widgets/amount_field.dart';
 ///   out from the cash alone.
 ///
 /// Saving the trip returns to the previous screen right away.
-/// Cara Bayar for a trip — Tunai and Non-Tunai go through the Grab app as
-/// usual (minimum fare guarantee, possible system cut); Offline is a trip
-/// flagged down outside the app, so none of that app-specific billing
-/// applies and the money lands straight in Bank instead of Saldo Grab.
-/// Offline otherwise uses the same simple form as Non-Tunai (an amount
-/// plus an optional manual Tip) since there's no separate billing step
-/// either way.
-enum _PaymentMethod { tunai, nonTunai, offline }
+/// Tunai/Non-Tunai/Offline is a single choice — Offline (flagged down
+/// directly) is always paid in cash and never goes through Grab's own
+/// billing (no minimum fare guarantee, no system cut), so it uses the
+/// same simple amount+Tip form as Non-Tunai but still routes money like
+/// Tunai.
+enum _TripType { tunai, nonTunai, offline }
 
 class GrabEntryScreen extends StatefulWidget {
   /// When set, edits this trip in place (same fare/tip transaction ids,
@@ -59,10 +57,20 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   final _makanCtrl = TextEditingController();
   final _fareFocus = FocusNode();
   DateTime _date = nowWib();
-  _PaymentMethod _method = _PaymentMethod.tunai;
+  _TripType _tripType = _TripType.tunai;
 
-  bool get _isCash => _method == _PaymentMethod.tunai;
-  bool get _isOffline => _method == _PaymentMethod.offline;
+  /// Offline is always cash — there's no in-app non-cash channel for a
+  /// trip that never touched the app. Otherwise follows the chosen type.
+  bool get _isCash => _tripType != _TripType.nonTunai;
+
+  bool get _isOffline => _tripType == _TripType.offline;
+
+  /// Whether to show the Tunai-specific fields (billed/received/quick
+  /// chips/Uang Bersih) — only for a cash trip that went through the
+  /// app. Offline is cash too, but skips all of that (no separate
+  /// billing step, no minimum fare, no system cut), so it uses the same
+  /// simple amount+Tip form as Non-Tunai.
+  bool get _showTunaiFields => _tripType == _TripType.tunai;
 
   /// Non-tunai/Offline only — whether the Tip itself was handed over as physical
   /// cash (goes to dompet Cash) or through the app like the fare (goes
@@ -85,10 +93,23 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
     return null;
   }
 
-  /// The trip's "potongan" row, if it had one — the other 'grab'-category
-  /// transaction in the group besides the fare itself (see
+  /// The trip's "Biaya Admin Grab" row, if it had one — Grab's commission
+  /// on a cash trip with a known system cut (see
   /// [FinanceProvider.addGrabTrip]).
-  TransactionModel? get _existingPotongan {
+  TransactionModel? get _existingAdminFee {
+    final existing = widget.existing;
+    if (existing == null) return null;
+    for (final t in existing.transactions) {
+      if (t.categoryId == 'biaya_admin') return t;
+    }
+    return null;
+  }
+
+  /// The trip's minimum-fare top-up row, if it had one — the other
+  /// 'grab'-category transaction in the group besides the fare itself
+  /// (which [existing.primary] always resolves to; see
+  /// [DisplayEntry.primary]).
+  TransactionModel? get _existingTopUp {
     final existing = widget.existing;
     if (existing == null) return null;
     final fareId = existing.primary.id;
@@ -112,16 +133,14 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
       // back to the old (shortage-unaware) reconstruction for those.
       final receivedAmount = fare.receivedAmount ?? (billedFare + tipAmount);
       if (fare.isOffline ?? false) {
-        _method = _PaymentMethod.offline;
-      } else if (fare.isCash ?? true) {
-        _method = _PaymentMethod.tunai;
+        _tripType = _TripType.offline;
       } else {
-        _method = _PaymentMethod.nonTunai;
+        _tripType = (fare.isCash ?? true) ? _TripType.tunai : _TripType.nonTunai;
       }
       _date = fare.date;
       _noteCtrl.text = fare.note ?? '';
       _fareCtrl.text = formatPlainThousands(billedFare);
-      if (_isCash) {
+      if (_showTunaiFields) {
         _receivedCtrl.text = formatPlainThousands(receivedAmount);
         if (fare.netPayoutAmount != null) {
           _netPayoutCtrl.text = formatPlainThousands(fare.netPayoutAmount!);
@@ -141,24 +160,50 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   /// no shortage) rather than treating it as the customer paying zero.
   double get _receivedForCalc => _received > 0 ? _received : _fare;
 
-  /// Cash trips only — what Grab's system actually credited as the fare,
-  /// when that's less than the billed amount suggests (the system took a
-  /// cut that isn't reflected in the cash handed over). Left blank = not
-  /// known separately, so the usual billed/minimum-fare math is used.
+  /// Cash trips only — what Grab's system actually credits as net fare,
+  /// when that's less than the billed amount suggests (Grab took a
+  /// commission not reflected in the cash handed over). Left blank = no
+  /// known commission on this trip. The cash collected (Ongkos Grab +
+  /// Tip) is never reduced by this — see [_adminFee] for where the gap
+  /// actually gets booked.
   double? get _netPayout {
     final v = parseFormattedAmount(_netPayoutCtrl.text);
     return v > 0 ? v : null;
   }
 
-  /// For non-cash, there's no separate billing step, so [_fare] is
-  /// already what was received and the tip is just whatever was typed in
-  /// the manual Tip field. For cash, the actual fare/tip split (which
-  /// accounts for a possible shortage or a system cut) comes from the
-  /// same formula the provider uses to save, so the preview always
-  /// matches what's booked.
+  /// Grab's commission on this trip — the gap between the fare actually
+  /// booked ([_effectiveFare], which a shortage can top up above the raw
+  /// billed amount) and [_netPayout], when known. Booked as a separate
+  /// expense from Saldo Grab (not subtracted from the cash fare/tip),
+  /// since the full cash was still collected from the passenger. Never
+  /// applies to Offline — it never goes through Grab's billing at all.
+  double get _adminFee {
+    final netPayout = _netPayout;
+    if (!_showTunaiFields || netPayout == null) return 0;
+    final diff = _effectiveFare - netPayout;
+    return diff > 0 ? diff : 0;
+  }
+
+  /// Cash trips (through the app) billed below [kGrabMinimumFare] only —
+  /// the part of "Ongkos Grab" that's Grab's own top-up to the floor, not
+  /// cash the passenger handed over. Booked separately to Saldo Grab so
+  /// Cash only ever reflects real money received. Never applies to
+  /// Offline — there's no minimum-fare guarantee outside the app.
+  double get _topUp {
+    if (!_showTunaiFields) return 0;
+    final diff = kGrabMinimumFare - _fare;
+    return diff > 0 ? diff : 0;
+  }
+
+  /// For non-cash/Offline, there's no separate billing step, so [_fare]
+  /// is already what was received and the tip is just whatever was typed
+  /// in the manual Tip field. For a Tunai trip through the app, the
+  /// actual fare/tip split (which accounts for a possible shortage)
+  /// comes from the same formula the provider uses to save, so the
+  /// preview always matches what's booked.
   double get _effectiveFare {
-    if (_isCash) {
-      return FinanceProvider.resolveFareAndTip(_fare, _receivedForCalc, netPayout: _netPayout).$1;
+    if (_showTunaiFields) {
+      return FinanceProvider.resolveFareAndTip(_fare, _receivedForCalc).$1;
     }
     // Offline skips the minimum-fare guarantee — that's Grab's system, and
     // an offline trip never goes through it.
@@ -167,8 +212,8 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   }
 
   double get _tip {
-    if (_isCash) {
-      return FinanceProvider.resolveFareAndTip(_fare, _receivedForCalc, netPayout: _netPayout).$2;
+    if (_showTunaiFields) {
+      return FinanceProvider.resolveFareAndTip(_fare, _receivedForCalc).$2;
     }
     return parseFormattedAmount(_nonTunaiTipCtrl.text);
   }
@@ -189,7 +234,7 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.read<FinanceProvider>();
-    final shortage = _isCash && _received > 0 && _received < _fare;
+    final shortage = _showTunaiFields && _received > 0 && _received < _fare;
     final colorScheme = Theme.of(context).colorScheme;
     final total = _effectiveFare + _tip;
     final hargaTelur = provider.hargaTelur;
@@ -219,7 +264,7 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
                 Expanded(
                   child: Text(
                     _isOffline
-                        ? 'Trip offline (di luar aplikasi) — cukup isi jumlah yang diterima, tidak ada minimal ongkos/potongan sistem.'
+                        ? 'Trip offline (di luar aplikasi) — selalu tunai, cukup isi jumlah yang diterima, tidak ada minimal ongkos/potongan sistem.'
                         : 'Isi tagihan trip. Minimal ongkos Rp${formatPlainThousands(kGrabMinimumFare)} otomatis dari sistem. Kalau bayar tunai dan ada kelebihan uang, otomatis jadi Tip.',
                     style: TextStyle(color: colorScheme.onPrimaryContainer, fontSize: 12.5),
                   ),
@@ -228,26 +273,30 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          const Text('Cara Bayar', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('Jenis Trip', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          SegmentedButton<_PaymentMethod>(
+          SegmentedButton<_TripType>(
+            style: ButtonStyle(
+              textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12.5)),
+              padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 4)),
+              visualDensity: VisualDensity.compact,
+            ),
             segments: const [
-              ButtonSegment(value: _PaymentMethod.tunai, label: Text('Tunai'), icon: Icon(Icons.payments_outlined)),
-              ButtonSegment(value: _PaymentMethod.nonTunai, label: Text('Non-Tunai'), icon: Icon(Icons.credit_card)),
-              ButtonSegment(value: _PaymentMethod.offline, label: Text('Offline'), icon: Icon(Icons.handshake_outlined)),
+              ButtonSegment(value: _TripType.tunai, label: Text('Tunai'), icon: Icon(Icons.payments_outlined, size: 16)),
+              ButtonSegment(value: _TripType.nonTunai, label: Text('Non-Tunai'), icon: Icon(Icons.credit_card, size: 16)),
+              ButtonSegment(value: _TripType.offline, label: Text('Offline'), icon: Icon(Icons.handshake_outlined, size: 16)),
             ],
-            selected: {_method},
-            onSelectionChanged: (s) => setState(() => _method = s.first),
+            selected: {_tripType},
+            onSelectionChanged: (s) => setState(() => _tripType = s.first),
           ),
           const SizedBox(height: 20),
           AmountField(
             controller: _fareCtrl,
-            label: _isCash ? 'Tagihan ke Customer' : 'Uang yang Didapat',
-            autofocus: true,
+            label: _showTunaiFields ? 'Tagihan ke Customer' : 'Uang yang Didapat',
             focusNode: _fareFocus,
             onChanged: (_) => setState(() {}),
           ),
-          if (_isCash) ...[
+          if (_showTunaiFields) ...[
             const SizedBox(height: 20),
             AmountField(
               controller: _receivedCtrl,
@@ -280,7 +329,7 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
             const Padding(
               padding: EdgeInsets.only(top: 6),
               child: Text(
-                'Isi kalau pendapatan trip yang dikredit sistem Grab lebih kecil dari tagihan (ada potongan), walau customer bayar tunai sesuai tagihan/lebih. Kosongkan kalau tidak ada potongan.',
+                'Isi kalau pendapatan bersih yang dikredit sistem Grab lebih kecil dari tagihan. Selisihnya dicatat sebagai Biaya Admin Grab (mengurangi Saldo Grab) — uang cash yang Anda terima (Ongkos + Tip) tetap dicatat penuh. Kosongkan kalau tidak ada potongan.',
                 style: TextStyle(fontSize: 11.5, color: Colors.grey),
               ),
             ),
@@ -291,18 +340,22 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
               label: 'Tip',
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: 4),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              value: _tipIsCash,
-              onChanged: (v) => setState(() => _tipIsCash = v),
-              title: const Text('Tip diterima tunai', style: TextStyle(fontSize: 14)),
-              subtitle: Text(
-                _tipIsCash ? 'Masuk dompet Cash' : (_isOffline ? 'Masuk dompet Bank' : 'Masuk dompet Saldo Grab (lewat aplikasi)'),
-                style: const TextStyle(fontSize: 11.5),
+            // Offline is always cash — fare and tip both land in Cash
+            // regardless, so there's no "which dompet" choice to make.
+            if (!_isOffline) ...[
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                value: _tipIsCash,
+                onChanged: (v) => setState(() => _tipIsCash = v),
+                title: const Text('Tip diterima tunai', style: TextStyle(fontSize: 14)),
+                subtitle: Text(
+                  _tipIsCash ? 'Masuk dompet Cash' : 'Masuk dompet Saldo Grab (lewat aplikasi)',
+                  style: const TextStyle(fontSize: 11.5),
+                ),
               ),
-            ),
+            ],
           ],
           const SizedBox(height: 20),
           InkWell(
@@ -402,31 +455,29 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
                     const SizedBox(height: 8),
                     _breakdownRow('Tip', _tip, colorScheme.onTertiaryContainer),
                   ],
-                  if (_isCash && _netPayout != null) ...[
-                    const SizedBox(height: 8),
-                    _breakdownRow(
-                      'Potongan Sistem',
-                      -((_fare < kGrabMinimumFare ? kGrabMinimumFare : _fare) - _netPayout!),
-                      colorScheme.onTertiaryContainer,
-                    ),
-                  ],
                   Divider(height: 20, color: colorScheme.onTertiaryContainer.withOpacity(0.25)),
-                  _breakdownRow('Total Masuk', total, colorScheme.onTertiaryContainer, bold: true),
-                  if (_isCash && _netPayout != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Uang tunai di tangan: ${formatRupiah(_receivedForCalc)}',
-                        style: TextStyle(color: colorScheme.onTertiaryContainer.withOpacity(0.7), fontSize: 11.5),
-                      ),
-                    ),
+                  _breakdownRow('Total Cash Diterima', total - _topUp, colorScheme.onTertiaryContainer, bold: true),
+                  if (_topUp > 0) ...[
+                    const SizedBox(height: 8),
+                    _breakdownRow('Subsidi ke Saldo Grab (bukan cash)', _topUp, colorScheme.onTertiaryContainer),
+                  ],
+                  if (_adminFee > 0) ...[
+                    const SizedBox(height: 8),
+                    _breakdownRow('Biaya Admin Grab (dari Saldo Grab)', -_adminFee, colorScheme.onTertiaryContainer),
+                    Divider(height: 20, color: colorScheme.onTertiaryContainer.withOpacity(0.25)),
+                    _breakdownRow('Pendapatan Bersih', total - _adminFee, colorScheme.onTertiaryContainer, bold: true),
+                  ],
                 ],
               ),
             ),
           const SizedBox(height: 24),
           TextField(
             controller: _noteCtrl,
-            decoration: const InputDecoration(labelText: 'Catatan'),
+            decoration: const InputDecoration(
+              labelText: 'Catatan',
+              isDense: true,
+              contentPadding: EdgeInsets.only(bottom: 8),
+            ),
           ),
           const SizedBox(height: 24),
           FilledButton(
@@ -463,9 +514,9 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   }
 
   Future<void> _save(BuildContext context, FinanceProvider provider) async {
-    final receivedAmount = _isCash ? _receivedForCalc : (_fare + _tip);
+    final receivedAmount = _showTunaiFields ? _receivedForCalc : (_fare + _tip);
     final note = _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim();
-    final netPayoutAmount = _isCash ? _netPayout : null;
+    final netPayoutAmount = _showTunaiFields ? _netPayout : null;
 
     if (_isEdit) {
       final existing = widget.existing!;
@@ -473,7 +524,8 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
         existingFare: existing.primary,
         groupId: existing.groupId!,
         existingTip: _existingTip,
-        existingPotongan: _existingPotongan,
+        existingAdminFee: _existingAdminFee,
+        existingTopUp: _existingTopUp,
         fareAmount: _fare,
         receivedAmount: receivedAmount,
         date: _date,

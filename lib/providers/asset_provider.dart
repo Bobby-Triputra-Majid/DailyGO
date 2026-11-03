@@ -3,6 +3,7 @@ import '../data/hive_boxes.dart';
 import '../models/category_model.dart';
 import '../models/debt_model.dart';
 import '../models/transaction_model.dart';
+import '../models/wallet_model.dart';
 import '../utils/date_period.dart';
 import 'finance_provider.dart';
 
@@ -140,8 +141,8 @@ class AssetProvider extends ChangeNotifier {
 
   /// Marks a debt as fully paid off in one go — just pays whatever is
   /// still [DebtModel.remaining].
-  Future<void> markDebtPaid(DebtModel debt, FinanceProvider financeProvider) {
-    return payDebt(debt, debt.remaining, financeProvider);
+  Future<void> markDebtPaid(DebtModel debt, FinanceProvider financeProvider, {String walletId = kWalletCash}) {
+    return payDebt(debt, debt.remaining, financeProvider, walletId: walletId);
   }
 
   /// Books a payment toward a debt — the full remaining balance, or only
@@ -151,7 +152,10 @@ class AssetProvider extends ChangeNotifier {
   /// else, an expense — either way it's the first time this money is
   /// recognised as actually changing hands. [amount] is clamped to what's
   /// actually still owed, and amounts that pay it off fully mark it Lunas.
-  Future<void> payDebt(DebtModel debt, double amount, FinanceProvider financeProvider) async {
+  /// [walletId] defaults to Cash since there's no wallet picker for this
+  /// yet — without it, the payment would reduce Saldo but never show up
+  /// in any dompet's balance/history.
+  Future<void> payDebt(DebtModel debt, double amount, FinanceProvider financeProvider, {String walletId = kWalletCash}) async {
     if (debt.isPaid || amount <= 0) return;
     final payment = amount > debt.remaining ? debt.remaining : amount;
     final isFullPayment = payment >= debt.remaining;
@@ -166,6 +170,7 @@ class AssetProvider extends ChangeNotifier {
       note: debt.direction == DebtDirection.theyOweMe
           ? (isFullPayment ? 'Pelunasan dari ${debt.personName}' : 'Pembayaran sebagian dari ${debt.personName}')
           : (isFullPayment ? 'Pelunasan ke ${debt.personName}' : 'Pembayaran sebagian ke ${debt.personName}'),
+      walletId: walletId,
     );
     await financeProvider.addTransaction(tx);
 

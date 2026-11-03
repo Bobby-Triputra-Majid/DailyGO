@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/category_model.dart';
 import '../models/transaction_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/finance_provider.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/date_period.dart';
@@ -45,8 +46,15 @@ class _GrabTabScreenState extends State<GrabTabScreen> {
     final provider = context.watch<FinanceProvider>();
     final range = PeriodUtils.rangeFor(_periodType, _anchor);
     final txsInRange = provider.transactionsInRange(range);
+    // 'biaya_admin' (Grab's commission on a cash trip with a system cut)
+    // is included here too, purely so grouping nets it against the
+    // fare/tip it belongs to — each trip's card then shows what was
+    // actually earned net of that commission, not just the gross cash
+    // collected. fareTotal/tipTotal below still filter to their own
+    // exact category, so the stat card above isn't affected by this.
     final grabTxs = txsInRange
-        .where((t) => t.groupLabel == 'Trip Grab' && (t.categoryId == 'grab' || t.categoryId == 'tip'))
+        .where((t) =>
+            t.groupLabel == 'Trip Grab' && (t.categoryId == 'grab' || t.categoryId == 'tip' || t.categoryId == 'biaya_admin'))
         .toList();
     final fuelTxs = txsInRange.where((t) => t.categoryId == 'bensin_grab').toList();
     // "Makan" recorded from a Trip Grab entry is a Grab work cost, so it's
@@ -59,9 +67,13 @@ class _GrabTabScreenState extends State<GrabTabScreen> {
 
     final fareTotal = grabTxs.where((t) => t.categoryId == 'grab').fold(0.0, (s, t) => s + t.amount);
     final tipTotal = grabTxs.where((t) => t.categoryId == 'tip').fold(0.0, (s, t) => s + t.amount);
+    final adminFeeTotal = grabTxs.where((t) => t.categoryId == 'biaya_admin').fold(0.0, (s, t) => s + t.amount);
     final fuelTotal = fuelTxs.fold(0.0, (s, t) => s + t.amount);
     final makanTotal = makanTxs.fold(0.0, (s, t) => s + t.amount);
-    final netTotal = fareTotal + tipTotal - (_includeCostsInNet ? (fuelTotal + makanTotal) : 0);
+    // Grab's commission always comes out — unlike BBM/Makan, it's a
+    // direct cost of the trip itself, not a lump sum that would distort
+    // a single day — so it's subtracted regardless of the eye toggle.
+    final netTotal = fareTotal + tipTotal - adminFeeTotal - (_includeCostsInNet ? (fuelTotal + makanTotal) : 0);
     final colorScheme = Theme.of(context).colorScheme;
 
     // Net total for the equivalent previous period (e.g. yesterday, for
@@ -75,10 +87,14 @@ class _GrabTabScreenState extends State<GrabTabScreen> {
     final previousMakanTotal = previousTxs
         .where((t) => t.categoryId == 'makan' && t.groupLabel == 'Trip Grab')
         .fold(0.0, (s, t) => s + t.amount);
+    final previousAdminFeeTotal = previousTxs
+        .where((t) => t.categoryId == 'biaya_admin' && t.groupLabel == 'Trip Grab')
+        .fold(0.0, (s, t) => s + t.amount);
     final previousFareTotal = previousGrabTxs.where((t) => t.categoryId == 'grab').fold(0.0, (s, t) => s + t.amount);
     final previousTipTotal = previousGrabTxs.where((t) => t.categoryId == 'tip').fold(0.0, (s, t) => s + t.amount);
     final previousNetTotal = previousFareTotal +
         previousTipTotal -
+        previousAdminFeeTotal -
         (_includeCostsInNet ? (previousFuelTotal + previousMakanTotal) : 0);
 
     return Scaffold(
@@ -134,6 +150,11 @@ class _GrabTabScreenState extends State<GrabTabScreen> {
             stats: [
               StatItemData(icon: Icons.local_taxi, label: 'Ongkos', value: fareTotal, color: kStatIncomeColor),
               StatItemData(icon: Icons.card_giftcard, label: 'Tip', value: tipTotal, color: kStatIncomeColor),
+              // Biaya Admin Grab is subtracted from Pendapatan Bersih above
+              // (it's a real commission, reducing Saldo Grab for real),
+              // but isn't shown as "Pengeluaran" here — it's Grab's own
+              // cut, not something bought, so it's left for Saldo Grab's
+              // own wallet history to show instead.
               StatItemData(
                 icon: Icons.arrow_upward,
                 label: 'Pengeluaran',
@@ -404,7 +425,6 @@ class _MakanQuickSheetState extends State<_MakanQuickSheet> {
           AmountField(
             controller: _amountCtrl,
             label: 'Biaya Makan',
-            autofocus: true,
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 4),
@@ -458,6 +478,7 @@ class _MakanQuickSheetState extends State<_MakanQuickSheet> {
       date: nowWib(),
       note: _telur ? 'Makan + $telurNote' : 'Makan',
       groupLabel: 'Trip Grab',
+      walletId: kWalletCash,
     ));
     if (mounted) Navigator.pop(context);
   }

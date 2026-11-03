@@ -86,7 +86,7 @@ class WalletScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Tambah Dompet'),
-        content: TextField(controller: ctrl, autofocus: true, decoration: const InputDecoration(labelText: 'Nama Dompet')),
+        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Nama Dompet')),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
           FilledButton(
@@ -116,7 +116,7 @@ class _WalletCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: GestureDetector(
-          onTap: () => _showLogoOptions(context, walletProvider),
+          onTap: () => _showWalletOptions(context, walletProvider),
           child: _buildAvatar(colorScheme),
         ),
         title: Text(wallet.name),
@@ -154,7 +154,13 @@ class _WalletCard extends StatelessWidget {
     );
   }
 
-  void _showLogoOptions(BuildContext context, WalletProvider walletProvider) {
+  void _showWalletOptions(BuildContext context, WalletProvider walletProvider) {
+    // Seeded wallets (Cash, Saldo Grab, Bank) can be renamed but never
+    // deleted — Grab trip entry assumes they exist — and any wallet
+    // still referenced by a transaction would leave that history
+    // orphaned if removed.
+    final canDelete = !wallet.isDefault && !walletProvider.walletInUse(wallet.id);
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
@@ -164,7 +170,15 @@ class _WalletCard extends StatelessWidget {
           children: [
             ListTile(
               title: Text(wallet.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Pasang gambar logo untuk dompet ini'),
+              subtitle: const Text('Kelola dompet ini'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('Ganti Nama'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showRenameDialog(context, walletProvider);
+              },
             ),
             ListTile(
               leading: const Icon(Icons.image_outlined),
@@ -176,17 +190,78 @@ class _WalletCard extends StatelessWidget {
             ),
             if (wallet.imagePath != null)
               ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title: const Text('Hapus Logo', style: TextStyle(color: Colors.red)),
+                leading: const Icon(Icons.hide_image_outlined),
+                title: const Text('Hapus Logo'),
                 onTap: () async {
                   Navigator.pop(ctx);
                   await walletProvider.clearWalletImage(wallet.id);
                 },
               ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: canDelete ? Colors.red : Theme.of(ctx).disabledColor),
+              title: Text('Hapus Dompet', style: TextStyle(color: canDelete ? Colors.red : Theme.of(ctx).disabledColor)),
+              subtitle: canDelete
+                  ? null
+                  : Text(
+                      wallet.isDefault ? 'Dompet bawaan tidak bisa dihapus' : 'Masih ada riwayat transaksi di dompet ini',
+                      style: const TextStyle(fontSize: 11.5),
+                    ),
+              onTap: canDelete
+                  ? () {
+                      Navigator.pop(ctx);
+                      _confirmDelete(context, walletProvider);
+                    }
+                  : null,
+            ),
           ],
         ),
       ),
     );
+  }
+
+  void _showRenameDialog(BuildContext context, WalletProvider walletProvider) {
+    final ctrl = TextEditingController(text: wallet.name);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ganti Nama Dompet'),
+        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Nama Dompet')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+          FilledButton(
+            onPressed: () {
+              if (ctrl.text.trim().isNotEmpty) walletProvider.renameWallet(wallet.id, ctrl.text.trim());
+              Navigator.pop(ctx);
+            },
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context, WalletProvider walletProvider) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hapus Dompet'),
+        content: Text('Hapus dompet "${wallet.name}"? Tindakan ini tidak bisa dibatalkan.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Hapus', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final ok = await walletProvider.deleteWallet(wallet.id);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dompet ini tidak bisa dihapus.')),
+      );
+    }
   }
 
   IconData _iconFor(String id) {

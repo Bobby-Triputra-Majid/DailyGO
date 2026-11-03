@@ -132,7 +132,7 @@ class SettingsScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Harga Ke Kampus'),
-        content: AmountField(controller: ctrl, label: 'Harga per hari', autofocus: true),
+        content: AmountField(controller: ctrl, label: 'Harga per hari'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
           FilledButton(
@@ -154,7 +154,7 @@ class SettingsScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Harga Telur (Add On)'),
-        content: AmountField(controller: ctrl, label: 'Harga add on', autofocus: true),
+        content: AmountField(controller: ctrl, label: 'Harga add on'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
           FilledButton(

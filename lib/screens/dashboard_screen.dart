@@ -46,12 +46,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final assetProvider = context.watch<AssetProvider>();
     final range = PeriodUtils.rangeFor(_periodType, _anchor);
     // Grab trip money (fare + tip) is real money, so it still counts
-    // toward Saldo/Pemasukan here — but the "Trip Grab" rows themselves
-    // are only listed on the Grab tab, so they're left out of the recent
-    // list and the category breakdown to avoid showing them twice.
+    // toward Saldo/Pemasukan here — but the individual "Trip Grab" rows
+    // are left out of the recent list, since they're already listed one
+    // by one on the Grab tab.
     const tripGrabLabel = 'Trip Grab';
     final income = provider.totalForType(range, TxType.income);
-    final expense = provider.totalForType(range, TxType.expense);
+    // Biaya Admin Grab (Grab's own commission) still reduces Saldo for
+    // real — allTimeBalance below isn't adjusted — but it's Grab's cut,
+    // not something bought, so it's left out of the Pengeluaran figure
+    // shown here (still visible in Saldo Grab's own wallet history).
+    final adminFeeInRange =
+        provider.transactionsInRange(range, categoryId: 'biaya_admin').fold(0.0, (s, t) => s + t.amount);
+    final expense = provider.totalForType(range, TxType.expense) - adminFeeInRange;
     // Saldo itself is cumulative (all-time), not limited to the selected
     // period — otherwise it'd look like it resets to 0 every time the
     // period rolls over, even though past income (e.g. savings) is still
@@ -63,7 +69,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       recentTxs = recentTxs.where((t) => t.note != null && t.note!.toLowerCase().contains(_query)).toList();
     }
     final recent = groupTransactions(recentTxs).take(_query.isEmpty ? 6 : 50).toList();
-    final breakdown = provider.categoryBreakdown(range, TxType.income, excludeGroupLabel: tripGrabLabel);
 
     // Individual Grab trips/fuel/meals still don't show up one by one on
     // Beranda — but their totals for the period do, as a single "Trip
@@ -73,7 +78,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final grabIncomeTxs =
         allInRange.where((t) => t.groupLabel == tripGrabLabel && (t.categoryId == 'grab' || t.categoryId == 'tip')).toList();
     final grabIncomeTotal = grabIncomeTxs.fold(0.0, (s, t) => s + t.amount);
-    final tripCount = allInRange.where((t) => t.groupLabel == tripGrabLabel && t.categoryId == 'grab').length;
+    // Counted by distinct groupId, not row count — a trip billed below
+    // the minimum fare books a second 'grab'-category row (the top-up to
+    // Saldo Grab), which would otherwise double-count that one trip.
+    final tripCount = allInRange
+        .where((t) => t.groupLabel == tripGrabLabel && t.categoryId == 'grab')
+        .map((t) => t.groupId)
+        .toSet()
+        .length;
     final grabExpenseTotal = allInRange
         .where((t) => t.categoryId == 'bensin_grab' || (t.categoryId == 'makan' && t.groupLabel == tripGrabLabel))
         .fold(0.0, (s, t) => s + t.amount);
@@ -173,8 +185,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            if (breakdown.isNotEmpty) ..._buildTopCategoriesCard(context, breakdown),
-            const SizedBox(height: 12),
             _buildSearchBar(context),
             const SizedBox(height: 12),
             Row(
@@ -305,71 +315,4 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  List<Widget> _buildTopCategoriesCard(BuildContext context, Map<CategoryModel, double> breakdown) {
-    return [
-      Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            initiallyExpanded: true,
-            tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-            title: Text('Pemasukan Terbesar', style: Theme.of(context).textTheme.titleMedium),
-            children: _buildTopCategoryRows(context, breakdown),
-          ),
-        ),
-      ),
-    ];
-  }
-
-  List<Widget> _buildTopCategoryRows(BuildContext context, Map<CategoryModel, double> breakdown) {
-    final total = breakdown.values.fold(0.0, (a, b) => a + b);
-    final top = breakdown.entries.take(3).toList();
-    final colorScheme = Theme.of(context).colorScheme;
-    return [
-      ...top.map((e) {
-        final pct = total == 0 ? 0.0 : (e.value / total);
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(color: Color(e.key.colorValue), shape: BoxShape.circle),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(e.key.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                  Text(
-                    '${formatRupiah(e.value)} (${(pct * 100).toStringAsFixed(0)}%)',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LinearProgressIndicator(
-                  value: pct,
-                  minHeight: 6,
-                  backgroundColor: colorScheme.surfaceContainerHighest,
-                  color: Color(e.key.colorValue),
-                ),
-              ),
-            ],
-          ),
-        );
-      }),
-    ];
-  }
 }

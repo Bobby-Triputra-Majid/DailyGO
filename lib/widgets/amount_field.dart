@@ -44,6 +44,17 @@ class AmountField extends StatelessWidget {
     this.focusNode,
   });
 
+  /// Appends "000" to whatever digits are already typed — e.g. "7" becomes
+  /// "7000" in one tap — so a round number doesn't need three extra key
+  /// presses on the plain numeric keyboard.
+  void _addThreeZeros() {
+    final digits = controller.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return;
+    final newText = NumberFormat.decimalPattern('id_ID').format(int.parse('${digits}000'));
+    controller.value = TextEditingValue(text: newText, selection: TextSelection.collapsed(offset: newText.length));
+    onChanged?.call(newText);
+  }
+
   @override
   Widget build(BuildContext context) {
     return TextField(
@@ -58,6 +69,18 @@ class AmountField extends StatelessWidget {
         labelText: label,
         hintText: hint ?? '0',
         prefixText: 'Rp ',
+        suffixIcon: Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Align(
+            alignment: Alignment.centerRight,
+            widthFactor: 1,
+            child: TextButton(
+              onPressed: _addThreeZeros,
+              style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 10)),
+              child: const Text('000', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
       ),
     );
   }

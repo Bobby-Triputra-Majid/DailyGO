@@ -3,6 +3,7 @@ import '../data/hive_boxes.dart';
 import '../models/category_model.dart';
 import '../models/debt_model.dart';
 import '../models/transaction_model.dart';
+import '../models/wallet_model.dart';
 import 'date_period.dart';
 
 /// Serializes/restores everything in Hive (categories, transactions,
@@ -19,6 +20,7 @@ class BackupService {
       'categories': HiveBoxes.categories.values.map(_categoryToMap).toList(),
       'transactions': HiveBoxes.transactions.values.map(_transactionToMap).toList(),
       'debts': HiveBoxes.debts.values.map(_debtToMap).toList(),
+      'wallets': HiveBoxes.wallets.values.map(_walletToMap).toList(),
     };
     return const JsonEncoder.withIndent('  ').convert(data);
   }
@@ -36,6 +38,11 @@ class BackupService {
     final debts = (data['debts'] as List? ?? [])
         .map((m) => _debtFromMap(m as Map<String, dynamic>))
         .toList();
+    // Older backups (made before wallets were included) have no 'wallets'
+    // key at all — restoring one of those must leave the current wallets
+    // box alone, not wipe it down to nothing.
+    final walletsData = data['wallets'] as List?;
+    final wallets = walletsData?.map((m) => _walletFromMap(m as Map<String, dynamic>)).toList();
 
     await HiveBoxes.categories.clear();
     await HiveBoxes.transactions.clear();
@@ -49,6 +56,20 @@ class BackupService {
     }
     for (final d in debts) {
       await HiveBoxes.debts.put(d.id, d);
+    }
+    if (wallets != null) {
+      await HiveBoxes.wallets.clear();
+      for (final w in wallets) {
+        await HiveBoxes.wallets.put(w.id, w);
+      }
+      // Grab trip entry assumes these 3 exist by id — restore them even if
+      // a corrupted/edited backup was missing one.
+      const defaults = {kWalletCash: 'Cash', kWalletSaldoGrab: 'Saldo Grab', kWalletBank: 'Bank'};
+      for (final entry in defaults.entries) {
+        if (!HiveBoxes.wallets.containsKey(entry.key)) {
+          await HiveBoxes.wallets.put(entry.key, WalletModel(id: entry.key, name: entry.value, isDefault: true));
+        }
+      }
     }
   }
 
@@ -79,6 +100,13 @@ class BackupService {
         'note': t.note,
         'groupId': t.groupId,
         'groupLabel': t.groupLabel,
+        'isCash': t.isCash,
+        'billedAmount': t.billedAmount,
+        'receivedAmount': t.receivedAmount,
+        'netPayoutAmount': t.netPayoutAmount,
+        'walletId': t.walletId,
+        'isTransfer': t.isTransfer,
+        'isOffline': t.isOffline,
       };
 
   static TransactionModel _transactionFromMap(Map<String, dynamic> m) => TransactionModel(
@@ -90,6 +118,27 @@ class BackupService {
         note: m['note'] as String?,
         groupId: m['groupId'] as String?,
         groupLabel: m['groupLabel'] as String?,
+        isCash: m['isCash'] as bool?,
+        billedAmount: (m['billedAmount'] as num?)?.toDouble(),
+        receivedAmount: (m['receivedAmount'] as num?)?.toDouble(),
+        netPayoutAmount: (m['netPayoutAmount'] as num?)?.toDouble(),
+        walletId: m['walletId'] as String?,
+        isTransfer: m['isTransfer'] as bool? ?? false,
+        isOffline: m['isOffline'] as bool?,
+      );
+
+  static Map<String, dynamic> _walletToMap(WalletModel w) => {
+        'id': w.id,
+        'name': w.name,
+        'isDefault': w.isDefault,
+        'imagePath': w.imagePath,
+      };
+
+  static WalletModel _walletFromMap(Map<String, dynamic> m) => WalletModel(
+        id: m['id'] as String,
+        name: m['name'] as String,
+        isDefault: m['isDefault'] as bool? ?? false,
+        imagePath: m['imagePath'] as String?,
       );
 
   static Map<String, dynamic> _debtToMap(DebtModel d) => {
