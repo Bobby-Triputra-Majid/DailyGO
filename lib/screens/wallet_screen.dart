@@ -272,6 +272,10 @@ class _WalletCard extends StatelessWidget {
         return Icons.local_taxi_outlined;
       case kWalletBank:
         return Icons.account_balance_outlined;
+      case kWalletLogam:
+        return Icons.monetization_on_outlined;
+      case kWalletGopek:
+        return Icons.paid_outlined;
       default:
         return Icons.account_balance_wallet_outlined;
     }

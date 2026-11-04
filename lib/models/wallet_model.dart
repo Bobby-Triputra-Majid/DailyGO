@@ -7,6 +7,12 @@ const String kWalletCash = 'cash';
 const String kWalletSaldoGrab = 'saldo_grab';
 const String kWalletBank = 'bank';
 
+/// Coin-jar wallets — seeded automatically (so "Pisahkan Koin" on a Grab
+/// trip always has somewhere to transfer to) but not [WalletModel.isDefault],
+/// so they can be deleted like any other custom dompet if unused.
+const String kWalletLogam = 'koin_logam';
+const String kWalletGopek = 'koin_gopek';
+
 /// Where money physically or virtually sits — Cash in hand, Grab's
 /// not-yet-withdrawn ledger, a bank account, etc. A wallet's balance is
 /// never stored directly; it's always derived by summing every

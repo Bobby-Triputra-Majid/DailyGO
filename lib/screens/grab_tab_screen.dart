@@ -70,9 +70,10 @@ class _GrabTabScreenState extends State<GrabTabScreen> {
     final adminFeeTotal = grabTxs.where((t) => t.categoryId == 'biaya_admin').fold(0.0, (s, t) => s + t.amount);
     final fuelTotal = fuelTxs.fold(0.0, (s, t) => s + t.amount);
     final makanTotal = makanTxs.fold(0.0, (s, t) => s + t.amount);
-    // Grab's commission always comes out — unlike BBM/Makan, it's a
-    // direct cost of the trip itself, not a lump sum that would distort
-    // a single day — so it's subtracted regardless of the eye toggle.
+    // Grab's commission always comes out — unlike BBM/Makan, it's a direct
+    // cost of the trip itself, not a lump sum that would distort a single
+    // day — so it's subtracted regardless of the eye toggle, and also shown
+    // as its own stat chip below so the gap from Ongkos+Tip isn't a mystery.
     final netTotal = fareTotal + tipTotal - adminFeeTotal - (_includeCostsInNet ? (fuelTotal + makanTotal) : 0);
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -148,13 +149,16 @@ class _GrabTabScreenState extends State<GrabTabScreen> {
                 ? 'Sembunyikan BBM & Makan dari Pendapatan Bersih'
                 : 'Lihat Pendapatan Bersih setelah dikurangi BBM & Makan',
             stats: [
-              StatItemData(icon: Icons.local_taxi, label: 'Ongkos', value: fareTotal, color: kStatIncomeColor),
+              // Shown net of Biaya Admin (Grab's commission) so this chip
+              // plus Tip always adds up to Pendapatan Bersih above, instead
+              // of the gross fare leaving an unexplained gap.
+              StatItemData(
+                icon: Icons.local_taxi,
+                label: 'Ongkos',
+                value: fareTotal - adminFeeTotal,
+                color: kStatIncomeColor,
+              ),
               StatItemData(icon: Icons.card_giftcard, label: 'Tip', value: tipTotal, color: kStatIncomeColor),
-              // Biaya Admin Grab is subtracted from Pendapatan Bersih above
-              // (it's a real commission, reducing Saldo Grab for real),
-              // but isn't shown as "Pengeluaran" here — it's Grab's own
-              // cut, not something bought, so it's left for Saldo Grab's
-              // own wallet history to show instead.
               StatItemData(
                 icon: Icons.arrow_upward,
                 label: 'Pengeluaran',

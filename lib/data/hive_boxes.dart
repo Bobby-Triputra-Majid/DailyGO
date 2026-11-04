@@ -37,14 +37,18 @@ class HiveBoxes {
     await _migrateLegacyData();
   }
 
-  /// The 3 dompets every install starts with. Upsert-if-missing, like
-  /// categories, so an app update can rely on these ids existing even on
-  /// installs that already have data.
+  /// The dompets every install starts with — 3 fixed ones Grab trip entry
+  /// routes money to by id, plus the 2 coin-jar wallets "Pisahkan Koin"
+  /// transfers into. Upsert-if-missing, like categories, so an app update
+  /// can rely on these ids existing even on installs that already have
+  /// data.
   static Future<void> _seedWallets() async {
     final defaults = [
       WalletModel(id: kWalletCash, name: 'Cash', isDefault: true),
       WalletModel(id: kWalletSaldoGrab, name: 'Saldo Grab', isDefault: true),
       WalletModel(id: kWalletBank, name: 'Bank', isDefault: true),
+      WalletModel(id: kWalletLogam, name: 'Uang Logam', isDefault: false),
+      WalletModel(id: kWalletGopek, name: 'Uang Gopek', isDefault: false),
     ];
     for (final w in defaults) {
       if (!wallets.containsKey(w.id)) {

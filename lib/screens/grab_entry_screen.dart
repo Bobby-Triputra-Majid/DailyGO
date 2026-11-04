@@ -37,6 +37,10 @@ import '../widgets/amount_field.dart';
 /// Tunai.
 enum _TripType { tunai, nonTunai, offline }
 
+/// Coin denominations "Pisahkan Koin" counts in.
+const double kLogamValue = 1000;
+const double kGopekValue = 500;
+
 class GrabEntryScreen extends StatefulWidget {
   /// When set, edits this trip in place (same fare/tip transaction ids,
   /// same groupId) instead of recording a brand-new one.
@@ -79,6 +83,16 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   bool _catatMakan = false;
   bool _telur = false;
   int _telurCount = 1;
+
+  /// New trips only (cash ones) — tapping the Logam/Gopek tile below adds
+  /// one coin each tap. A non-zero count here splits part of the cash just
+  /// collected off into the Logam/Gopek coin-jar wallets via an ordinary
+  /// dompet transfer right after the trip is saved, so Cash only ends up
+  /// holding what's left as paper money. See [_coinTotal].
+  int _logamCount = 0;
+  int _gopekCount = 0;
+
+  bool get _pisahkanKoin => _logamCount > 0 || _gopekCount > 0;
 
   bool get _isEdit => widget.existing != null;
 
@@ -219,6 +233,18 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
   }
   double get _makanAmount => parseFormattedAmount(_makanCtrl.text);
 
+  double get _logamTotal => _logamCount * kLogamValue;
+  double get _gopekTotal => _gopekCount * kGopekValue;
+  double get _coinTotal => _logamTotal + _gopekTotal;
+
+  /// What actually lands in Cash from this trip (fare's cash portion plus
+  /// tip, same figure the "Total Cash Diterima" row below shows) — the
+  /// most [_coinTotal] can be, since coins can't come from money that was
+  /// never physically handed over.
+  double get _cashFromThisTrip => _isCash ? (_effectiveFare + _tip - _topUp) : 0;
+
+  bool get _coinExceedsCash => _pisahkanKoin && _coinTotal > _cashFromThisTrip;
+
   @override
   void dispose() {
     _fareCtrl.dispose();
@@ -357,6 +383,58 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
               ),
             ],
           ],
+          if (_isCash && !_isEdit) ...[
+            const SizedBox(height: 20),
+            const Text('Pisahkan Uang Logam/Gopek', style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _coinTapTile(
+                    icon: Icons.monetization_on_outlined,
+                    label: 'Logam',
+                    valueLabel: 'Rp${formatPlainThousands(kLogamValue)}',
+                    count: _logamCount,
+                    color: colorScheme.primary,
+                    onTap: () => setState(() => _logamCount++),
+                    onReset: _logamCount > 0 ? () => setState(() => _logamCount = 0) : null,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _coinTapTile(
+                    icon: Icons.paid_outlined,
+                    label: 'Gopek',
+                    valueLabel: 'Rp${formatPlainThousands(kGopekValue)}',
+                    count: _gopekCount,
+                    color: colorScheme.primary,
+                    onTap: () => setState(() => _gopekCount++),
+                    onReset: _gopekCount > 0 ? () => setState(() => _gopekCount = 0) : null,
+                  ),
+                ),
+              ],
+            ),
+            if (_pisahkanKoin) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    'Total Koin: ${formatRupiah(_coinTotal)}',
+                    style: TextStyle(fontWeight: FontWeight.w600, color: _coinExceedsCash ? colorScheme.error : null),
+                  ),
+                ),
+              ),
+              if (_coinExceedsCash)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Total koin melebihi cash trip ini (${formatRupiah(_cashFromThisTrip)}).',
+                    style: TextStyle(color: colorScheme.error, fontSize: 12),
+                  ),
+                ),
+            ],
+          ],
           const SizedBox(height: 20),
           InkWell(
             onTap: _pickDate,
@@ -481,11 +559,70 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
           ),
           const SizedBox(height: 24),
           FilledButton(
-            onPressed: _fare <= 0 ? null : () => _save(context, provider),
+            onPressed: (_fare <= 0 || _coinExceedsCash) ? null : () => _save(context, provider),
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
             child: const Text('Simpan'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// A slim tappable "coin" tile — each tap adds one coin to the count
+  /// (see [_logamCount]/[_gopekCount]). A small "x" appears once [count] >
+  /// 0 to reset it back to zero in one tap instead of tapping the tile
+  /// itself down one at a time.
+  Widget _coinTapTile({
+    required IconData icon,
+    required String label,
+    required String valueLabel,
+    required int count,
+    required Color color,
+    required VoidCallback onTap,
+    required VoidCallback? onReset,
+  }) {
+    final active = count > 0;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        decoration: BoxDecoration(
+          color: active ? color.withOpacity(0.12) : null,
+          border: Border.all(color: active ? color : Colors.grey.shade400),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: active ? color : Colors.grey),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: active ? color : null)),
+                  Text(valueLabel, style: const TextStyle(fontSize: 10.5, color: Colors.grey)),
+                ],
+              ),
+            ),
+            Text(
+              '$count',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: active ? color : Colors.grey),
+            ),
+            if (onReset != null) ...[
+              const SizedBox(width: 2),
+              InkWell(
+                onTap: onReset,
+                customBorder: const CircleBorder(),
+                child: const Padding(
+                  padding: EdgeInsets.all(2),
+                  child: Icon(Icons.close, size: 14, color: Colors.grey),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -549,6 +686,26 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
       tipIsCash: _tipIsCash,
       isOffline: _isOffline,
     );
+    if (_pisahkanKoin && !_coinExceedsCash) {
+      if (_logamTotal > 0) {
+        await provider.transferBetweenWallets(
+          fromWalletId: kWalletCash,
+          toWalletId: kWalletLogam,
+          amount: _logamTotal,
+          date: _date,
+          note: 'Pisahkan uang logam dari trip Grab',
+        );
+      }
+      if (_gopekTotal > 0) {
+        await provider.transferBetweenWallets(
+          fromWalletId: kWalletCash,
+          toWalletId: kWalletGopek,
+          amount: _gopekTotal,
+          date: _date,
+          note: 'Pisahkan uang gopek dari trip Grab',
+        );
+      }
+    }
     final dayStart = DateTime(_date.year, _date.month, _date.day);
     final dayRange = PeriodRange(dayStart, dayStart.add(const Duration(days: 1)), '');
     final alreadyRecordedMakan = provider.transactionsInRange(dayRange, categoryId: 'makan').isNotEmpty;
