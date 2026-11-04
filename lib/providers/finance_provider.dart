@@ -232,10 +232,13 @@ class FinanceProvider extends ChangeNotifier {
   }
 
   /// Records a Grab trip. All rows share a groupId so the UI can show
-  /// them as one trip. See [resolveFareAndTip] for how the fare/tip
-  /// split is worked out, and [_adminFeeAmount] for the Grab commission
-  /// expense on a cash trip with a known system cut.
-  Future<void> addGrabTrip({
+  /// them as one trip — returned so a caller can tag anything else
+  /// derived from this same trip (e.g. a "Pisahkan Koin" transfer) with
+  /// it too, so deleting the trip cleans that up as well. See
+  /// [resolveFareAndTip] for how the fare/tip split is worked out, and
+  /// [_adminFeeAmount] for the Grab commission expense on a cash trip
+  /// with a known system cut.
+  Future<String> addGrabTrip({
     required double fareAmount,
     required double receivedAmount,
     required DateTime date,
@@ -327,6 +330,7 @@ class FinanceProvider extends ChangeNotifier {
     }
     _sortedTransactionsCache = null;
     notifyListeners();
+    return groupId;
   }
 
   /// Updates a trip recorded by [addGrabTrip], keeping its id/groupId so
@@ -450,6 +454,13 @@ class FinanceProvider extends ChangeNotifier {
   /// transfer (e.g. the bank's admin fee) is booked separately as an
   /// ordinary expense from [toWalletId], since that's genuinely money
   /// lost, not money that just changed location.
+  ///
+  /// [groupId]/[groupLabel] default to a fresh standalone "Transfer
+  /// Dompet" — pass the originating trip's own groupId (and groupLabel
+  /// 'Trip Grab') instead when this transfer is really just part of that
+  /// trip (e.g. "Pisahkan Koin" splitting cash just collected into coin
+  /// wallets), so deleting the trip deletes this leg too instead of
+  /// leaving an orphaned transfer behind.
   Future<void> transferBetweenWallets({
     required String fromWalletId,
     required String toWalletId,
@@ -457,8 +468,11 @@ class FinanceProvider extends ChangeNotifier {
     required DateTime date,
     String? note,
     double adminFee = 0,
+    String? groupId,
+    String? groupLabel,
   }) async {
-    final groupId = generateId();
+    final effectiveGroupId = groupId ?? generateId();
+    final effectiveGroupLabel = groupLabel ?? 'Transfer Dompet';
     final outTx = TransactionModel(
       id: generateId(),
       type: TxType.expense,
@@ -466,8 +480,8 @@ class FinanceProvider extends ChangeNotifier {
       categoryId: 'transfer',
       date: date,
       note: note,
-      groupId: groupId,
-      groupLabel: 'Transfer Dompet',
+      groupId: effectiveGroupId,
+      groupLabel: effectiveGroupLabel,
       walletId: fromWalletId,
       isTransfer: true,
     );
@@ -478,8 +492,8 @@ class FinanceProvider extends ChangeNotifier {
       categoryId: 'transfer',
       date: date,
       note: note,
-      groupId: groupId,
-      groupLabel: 'Transfer Dompet',
+      groupId: effectiveGroupId,
+      groupLabel: effectiveGroupLabel,
       walletId: toWalletId,
       isTransfer: true,
     );
@@ -494,8 +508,8 @@ class FinanceProvider extends ChangeNotifier {
         categoryId: 'biaya_admin',
         date: date,
         note: 'Biaya admin transfer',
-        groupId: groupId,
-        groupLabel: 'Transfer Dompet',
+        groupId: effectiveGroupId,
+        groupLabel: effectiveGroupLabel,
         walletId: toWalletId,
       );
       await HiveBoxes.transactions.put(feeTx.id, feeTx);

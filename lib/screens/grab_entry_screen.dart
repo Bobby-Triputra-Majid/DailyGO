@@ -676,7 +676,7 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
       return;
     }
 
-    await provider.addGrabTrip(
+    final tripGroupId = await provider.addGrabTrip(
       fareAmount: _fare,
       receivedAmount: receivedAmount,
       date: _date,
@@ -694,6 +694,8 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
           amount: _logamTotal,
           date: _date,
           note: 'Pisahkan uang logam dari trip Grab',
+          groupId: tripGroupId,
+          groupLabel: 'Trip Grab',
         );
       }
       if (_gopekTotal > 0) {
@@ -703,6 +705,8 @@ class _GrabEntryScreenState extends State<GrabEntryScreen> {
           amount: _gopekTotal,
           date: _date,
           note: 'Pisahkan uang gopek dari trip Grab',
+          groupId: tripGroupId,
+          groupLabel: 'Trip Grab',
         );
       }
     }
