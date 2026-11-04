@@ -46,3 +46,10 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Build/debug artifacts that shouldn't be committed
+*.apk
+*.aab
+*.ipa
+*.hprof
+DailyGO.apk
