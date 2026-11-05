@@ -9,6 +9,7 @@ import '../screens/debt_entry_screen.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/date_period.dart';
 import '../widgets/amount_field.dart';
+import '../widgets/wallet_dropdown.dart';
 
 /// One row for a single debt record (used in the per-person detail list).
 class DebtTile extends StatelessWidget {
@@ -119,23 +120,6 @@ void showDebtActions(
   );
 }
 
-/// Small "which dompet does this money move through" dropdown shared by
-/// both the Tandai Lunas and Bayar Sebagian dialogs below.
-Widget _walletDropdown(List<WalletModel> wallets, String value, ValueChanged<String> onChanged) {
-  return DropdownButtonFormField<String>(
-    initialValue: wallets.any((w) => w.id == value) ? value : null,
-    decoration: const InputDecoration(
-      labelText: 'Dompet',
-      border: OutlineInputBorder(),
-      contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-    ),
-    items: wallets.map((w) => DropdownMenuItem(value: w.id, child: Text(w.name))).toList(),
-    onChanged: (v) {
-      if (v != null) onChanged(v);
-    },
-  );
-}
-
 /// Asks which dompet the full remaining amount lands in (or comes out
 /// of, for a utang) before settling the debt.
 void _showMarkPaidDialog(
@@ -158,7 +142,7 @@ void _showMarkPaidDialog(
             children: [
               Text('Jumlah: ${formatRupiah(debt.remaining)}'),
               const SizedBox(height: 14),
-              _walletDropdown(wallets, walletId, (v) => setState(() => walletId = v)),
+              WalletDropdown(wallets: wallets, value: walletId, onChanged: (v) => setState(() => walletId = v)),
             ],
           ),
           actions: [
@@ -210,7 +194,7 @@ void _showPartialPaymentDialog(
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 14),
-              _walletDropdown(wallets, walletId, (v) => setState(() => walletId = v)),
+              WalletDropdown(wallets: wallets, value: walletId, onChanged: (v) => setState(() => walletId = v)),
               if (tooMuch)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),

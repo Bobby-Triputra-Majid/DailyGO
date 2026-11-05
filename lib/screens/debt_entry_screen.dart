@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/debt_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/asset_provider.dart';
+import '../providers/finance_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/date_period.dart';
 import '../widgets/amount_field.dart';
+import '../widgets/wallet_dropdown.dart';
 
 class DebtEntryScreen extends StatefulWidget {
   final String? initialName;
@@ -15,7 +19,7 @@ class DebtEntryScreen extends StatefulWidget {
   /// adding from there doesn't default to Piutang first.
   final DebtDirection initialDirection;
 
-  const DebtEntryScreen({super.key, this.initialName, this.existing, this.initialDirection = DebtDirection.theyOweMe});
+  const DebtEntryScreen({super.key, this.initialName, this.existing, this.initialDirection = DebtDirection.iOweThem});
 
   @override
   State<DebtEntryScreen> createState() => _DebtEntryScreenState();
@@ -29,6 +33,7 @@ class _DebtEntryScreenState extends State<DebtEntryScreen> {
   late final _noteCtrl = TextEditingController(text: widget.existing?.note ?? '');
   late DebtDirection _direction = widget.existing?.direction ?? widget.initialDirection;
   late DateTime _date = widget.existing?.date ?? nowWib();
+  late String _walletId = widget.existing?.walletId ?? kWalletCash;
 
   bool get _isEdit => widget.existing != null;
 
@@ -67,8 +72,8 @@ class _DebtEntryScreenState extends State<DebtEntryScreen> {
         children: [
           SegmentedButton<DebtDirection>(
             segments: const [
-              ButtonSegment(value: DebtDirection.theyOweMe, label: Text('Piutang')),
               ButtonSegment(value: DebtDirection.iOweThem, label: Text('Utang')),
+              ButtonSegment(value: DebtDirection.theyOweMe, label: Text('Piutang')),
             ],
             selected: {_direction},
             onSelectionChanged: (s) => setState(() => _direction = s.first),
@@ -101,6 +106,13 @@ class _DebtEntryScreenState extends State<DebtEntryScreen> {
           ],
           const SizedBox(height: 20),
           AmountField(controller: _amountCtrl, label: 'Jumlah', onChanged: (_) => setState(() {})),
+          const SizedBox(height: 20),
+          WalletDropdown(
+            wallets: context.watch<WalletProvider>().wallets,
+            value: _walletId,
+            label: _direction == DebtDirection.theyOweMe ? 'Diambil dari dompet' : 'Masuk ke dompet',
+            onChanged: (v) => setState(() => _walletId = v),
+          ),
           const SizedBox(height: 20),
           InkWell(
             onTap: _pickDate,
@@ -146,6 +158,7 @@ class _DebtEntryScreenState extends State<DebtEntryScreen> {
 
   Future<void> _save() async {
     final provider = context.read<AssetProvider>();
+    final financeProvider = context.read<FinanceProvider>();
     if (_isEdit) {
       final debt = widget.existing!;
       debt.personName = _nameCtrl.text.trim();
@@ -153,13 +166,16 @@ class _DebtEntryScreenState extends State<DebtEntryScreen> {
       debt.direction = _direction;
       debt.date = _date;
       debt.note = _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim();
-      await provider.updateDebt(debt);
+      debt.walletId = _walletId;
+      await provider.updateDebt(debt, financeProvider);
     } else {
       await provider.addDebt(
         personName: _nameCtrl.text.trim(),
         amount: parseFormattedAmount(_amountCtrl.text),
         direction: _direction,
         date: _date,
+        walletId: _walletId,
+        financeProvider: financeProvider,
         note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
       );
     }
@@ -176,7 +192,7 @@ class _DebtEntryScreenState extends State<DebtEntryScreen> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
           TextButton(
             onPressed: () {
-              context.read<AssetProvider>().deleteDebt(widget.existing!.id);
+              context.read<AssetProvider>().deleteDebt(widget.existing!.id, context.read<FinanceProvider>());
               Navigator.pop(ctx);
               Navigator.pop(context);
             },

@@ -152,6 +152,8 @@ class BackupService {
         'paidDate': d.paidDate?.toIso8601String(),
         'paidAmount': d.paidAmount,
         'settlementTransactionIds': d.settlementTransactionIds,
+        'walletId': d.walletId,
+        'originTransactionId': d.originTransactionId,
       };
 
   static DebtModel _debtFromMap(Map<String, dynamic> m) => DebtModel(
@@ -166,5 +168,7 @@ class BackupService {
         paidAmount: (m['paidAmount'] as num?)?.toDouble() ?? 0.0,
         settlementTransactionIds:
             (m['settlementTransactionIds'] as List?)?.map((e) => e as String).toList() ?? const [],
+        walletId: m['walletId'] as String?,
+        originTransactionId: m['originTransactionId'] as String?,
       );
 }

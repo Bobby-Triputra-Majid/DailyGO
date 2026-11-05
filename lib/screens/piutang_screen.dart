@@ -21,7 +21,7 @@ class _PiutangScreenState extends State<PiutangScreen> {
 
   /// Which side of utang/piutang this screen is currently showing —
   /// toggled with the segmented control below the search bar.
-  DebtDirection _direction = DebtDirection.theyOweMe;
+  DebtDirection _direction = DebtDirection.iOweThem;
 
   @override
   void dispose() {
@@ -88,8 +88,8 @@ class _PiutangScreenState extends State<PiutangScreen> {
           const SizedBox(height: 12),
           SegmentedButton<DebtDirection>(
             segments: const [
-              ButtonSegment(value: DebtDirection.theyOweMe, label: Text('Piutang'), icon: Icon(Icons.call_received)),
               ButtonSegment(value: DebtDirection.iOweThem, label: Text('Utang'), icon: Icon(Icons.call_made)),
+              ButtonSegment(value: DebtDirection.theyOweMe, label: Text('Piutang'), icon: Icon(Icons.call_received)),
             ],
             selected: {_direction},
             onSelectionChanged: (s) => setState(() => _direction = s.first),

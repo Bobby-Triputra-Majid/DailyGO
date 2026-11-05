@@ -25,6 +25,19 @@ class DebtModel extends HiveObject {
   /// instead of leaving orphaned entries in Riwayat Transaksi.
   List<String> settlementTransactionIds;
 
+  /// Which dompet the money moved through the moment this record was
+  /// created — taken from (piutang: lending cash out) or received into
+  /// (utang: borrowing cash in). Null only for a record saved before this
+  /// field existed, which has no wallet transaction tied to it yet.
+  String? walletId;
+
+  /// Id of the wallet transaction (tagged [TransactionModel.isTransfer])
+  /// that moved [amount] through [walletId] when this debt was created —
+  /// kept in sync whenever the amount/direction/wallet is edited, and
+  /// removed along with the debt. Null for a legacy debt that predates
+  /// wallet tracking.
+  String? originTransactionId;
+
   /// How much is still owed. Clamped so a rounding slip can't leave a
   /// "paid off" debt showing a tiny leftover balance.
   double get remaining => (amount - paidAmount).clamp(0.0, amount);
@@ -40,6 +53,8 @@ class DebtModel extends HiveObject {
     this.paidDate,
     this.paidAmount = 0.0,
     List<String>? settlementTransactionIds,
+    this.walletId,
+    this.originTransactionId,
   }) : settlementTransactionIds = settlementTransactionIds ?? [];
 }
 
@@ -64,13 +79,15 @@ class DebtModelAdapter extends TypeAdapter<DebtModel> {
       paidDate: fields[7] == null ? null : DateTime.fromMillisecondsSinceEpoch(fields[7] as int),
       paidAmount: fields[8] as double? ?? 0.0,
       settlementTransactionIds: (fields[9] as List?)?.map((e) => e as String).toList() ?? [],
+      walletId: fields[10] as String?,
+      originTransactionId: fields[11] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, DebtModel obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -90,6 +107,10 @@ class DebtModelAdapter extends TypeAdapter<DebtModel> {
       ..writeByte(8)
       ..write(obj.paidAmount)
       ..writeByte(9)
-      ..write(obj.settlementTransactionIds);
+      ..write(obj.settlementTransactionIds)
+      ..writeByte(10)
+      ..write(obj.walletId)
+      ..writeByte(11)
+      ..write(obj.originTransactionId);
   }
 }

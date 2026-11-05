@@ -190,6 +190,26 @@ class HiveBoxes {
         iconCodePoint: Icons.handshake.codePoint,
         isDefault: true,
       ),
+      // Booked once, the moment a piutang/utang record is created — not
+      // counted as real income/expense (isTransfer skips it), but still
+      // moves the chosen dompet's balance since cash really does leave
+      // (piutang) or enter (utang) hand at that point.
+      CategoryModel(
+        id: 'piutang_keluar',
+        name: 'Piutang Diberikan',
+        type: TxType.expense,
+        colorValue: 0xFF00897B,
+        iconCodePoint: Icons.call_made.codePoint,
+        isDefault: true,
+      ),
+      CategoryModel(
+        id: 'utang_masuk',
+        name: 'Utang Diterima',
+        type: TxType.income,
+        colorValue: 0xFF6A1B9A,
+        iconCodePoint: Icons.call_received.codePoint,
+        isDefault: true,
+      ),
       // Used by both legs of a dompet-to-dompet transfer (e.g. "Tarik
       // Saldo Grab") — purely for icon/label when shown in Riwayat
       // Dompet; never counted as income/expense (isTransfer skips it).

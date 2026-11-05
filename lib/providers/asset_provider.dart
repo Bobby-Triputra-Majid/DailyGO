@@ -75,11 +75,52 @@ class AssetProvider extends ChangeNotifier {
   String _generateId() => '${DateTime.now().microsecondsSinceEpoch}_${_counter++}';
   int _counter = 0;
 
+  /// Creates or updates the single wallet transaction standing for this
+  /// debt's own creation — e.g. lending Rp100.000 out (piutang) really
+  /// does take Rp100.000 out of some dompet right now, same as borrowing
+  /// (utang) really does put money into one. Tagged [TransactionModel.isTransfer]
+  /// so it still moves [DebtModel.walletId]'s balance without counting as
+  /// real income/expense in Saldo/Laporan — lending cash out isn't a
+  /// loss, it's just turning cash into a receivable. Shared by [addDebt]
+  /// and [updateDebt] so an edit to the amount/direction/wallet/date
+  /// keeps this transaction in sync instead of leaving a stale one
+  /// behind. No-op for a legacy debt that has no [DebtModel.walletId] set.
+  Future<void> _syncOriginTransaction(DebtModel debt, FinanceProvider financeProvider) async {
+    final walletId = debt.walletId;
+    if (walletId == null) return;
+    final isReceivable = debt.direction == DebtDirection.theyOweMe;
+    final existing = debt.originTransactionId == null ? null : HiveBoxes.transactions.get(debt.originTransactionId);
+    final tx = existing ??
+        TransactionModel(
+          id: financeProvider.generateId(),
+          type: TxType.expense,
+          amount: 0,
+          categoryId: '',
+          date: debt.date,
+        );
+    tx
+      ..type = isReceivable ? TxType.expense : TxType.income
+      ..amount = debt.amount
+      ..categoryId = isReceivable ? 'piutang_keluar' : 'utang_masuk'
+      ..date = debt.date
+      ..note = isReceivable ? 'Piutang ke ${debt.personName}' : 'Utang dari ${debt.personName}'
+      ..walletId = walletId
+      ..isTransfer = true;
+    if (existing == null) {
+      await financeProvider.addTransaction(tx);
+      debt.originTransactionId = tx.id;
+    } else {
+      await financeProvider.updateTransaction(tx);
+    }
+  }
+
   Future<DebtModel> addDebt({
     required String personName,
     required double amount,
     required DebtDirection direction,
     required DateTime date,
+    required String walletId,
+    required FinanceProvider financeProvider,
     String? note,
   }) async {
     final debt = DebtModel(
@@ -89,30 +130,34 @@ class AssetProvider extends ChangeNotifier {
       direction: direction,
       date: date,
       note: note,
+      walletId: walletId,
     );
+    await _syncOriginTransaction(debt, financeProvider);
     await HiveBoxes.debts.put(debt.id, debt);
     _sortedDebtsCache = null;
     notifyListeners();
     return debt;
   }
 
-  Future<void> updateDebt(DebtModel debt) async {
+  Future<void> updateDebt(DebtModel debt, FinanceProvider financeProvider) async {
+    await _syncOriginTransaction(debt, financeProvider);
     await HiveBoxes.debts.put(debt.id, debt);
     _sortedDebtsCache = null;
     notifyListeners();
   }
 
-  /// Deletes a debt record. [financeProvider], when given, also removes
-  /// every payment transaction ever booked for it — otherwise those
-  /// "Pelunasan"/"Pembayaran" entries would keep showing up in Riwayat
-  /// Transaksi and Beranda after the debt itself is gone.
-  Future<void> deleteDebt(String id, [FinanceProvider? financeProvider]) async {
-    if (financeProvider != null) {
-      final debt = HiveBoxes.debts.get(id);
-      if (debt != null) {
-        for (final txId in debt.settlementTransactionIds) {
-          await financeProvider.deleteTransaction(txId);
-        }
+  /// Deletes a debt record, along with the wallet transaction booked for
+  /// its creation and every payment transaction ever booked toward it —
+  /// otherwise those entries would keep showing up in Riwayat Transaksi
+  /// and dompet balances after the debt itself is gone.
+  Future<void> deleteDebt(String id, FinanceProvider financeProvider) async {
+    final debt = HiveBoxes.debts.get(id);
+    if (debt != null) {
+      for (final txId in debt.settlementTransactionIds) {
+        await financeProvider.deleteTransaction(txId);
+      }
+      if (debt.originTransactionId != null) {
+        await financeProvider.deleteTransaction(debt.originTransactionId!);
       }
     }
     await HiveBoxes.debts.delete(id);
@@ -123,13 +168,14 @@ class AssetProvider extends ChangeNotifier {
   /// Deletes every debt record for one person at once — used when the
   /// whole bubble is swiped away from the Piutang list. See [deleteDebt]
   /// for why [financeProvider] matters.
-  Future<void> deletePersonDebts(String personName, [FinanceProvider? financeProvider]) async {
+  Future<void> deletePersonDebts(String personName, FinanceProvider financeProvider) async {
     final matching = debtsForPerson(personName);
-    if (financeProvider != null) {
-      for (final d in matching) {
-        for (final txId in d.settlementTransactionIds) {
-          await financeProvider.deleteTransaction(txId);
-        }
+    for (final d in matching) {
+      for (final txId in d.settlementTransactionIds) {
+        await financeProvider.deleteTransaction(txId);
+      }
+      if (d.originTransactionId != null) {
+        await financeProvider.deleteTransaction(d.originTransactionId!);
       }
     }
     for (final d in matching) {
